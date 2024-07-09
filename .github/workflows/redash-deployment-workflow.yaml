@@ -1,0 +1,165 @@
+name: Deploy Redash
+
+on:
+  push:
+    branches:
+      - dev-redash
+  pull_request:
+    types:
+      - closed
+
+env:
+  REDASH_VERSION: "10.1.0.b50633"
+  REPO_NAME: "redash"
+  TAG: "${REDASH_VERSION}"
+  AWS_REGION: "us-east-2"
+  NAMESPACE: "redash"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v1
+        with:
+          version: "v1.24.0"
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: $AWS_REGION
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: pull, tag, and push Docker image to Amazon ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ env.REPO_NAME }}
+          IMAGE_TAG: ${{ env.TAG }}
+        run: |
+          echo "Pulling Redash image from Docker Hub..."
+          docker pull ${REPOSITORY}:${IMAGE_TAG}
+
+          echo "Tagging Docker image for ECR..."
+          ECR_URI="${REGISTRY}/${REPOSITORY}:${IMAGE_TAG}"
+          docker tag ${REPOSITORY}:${IMAGE_TAG} $ECR_URI
+
+          echo "Pushing Docker image to ECR..."
+          docker push $ECR_URI
+
+      
+      - name: Update kubeconfig
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            branch="${{ github.ref }}"
+            case "${branch}" in
+              refs/heads/redash-dev)
+                aws eks update-kubeconfig --name xxxxx --region $AWS_REGION
+                ;;
+              *)xxs
+                echo "Branch '${branch}' not supported for deployment."
+                exit 1
+                ;;
+            esac
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "${{ github.event.pull_request.merged }}" == "true" && "${{ github.event.pull_request.base.ref }}" == "main" ]]; then
+              aws eks update-kubeconfig --name xxxx --region $AWS_REGION
+            
+            else
+              echo "Pull request not merged into main. Skipping kubeconfig update."
+              echo "PR Merged: ${{ github.event.pull_request.merged }}, Base Ref: ${{ github.event.pull_request.base.ref }}"
+              exit 0
+            fi
+          else
+            echo "Unsupported event '${{ github.event_name }}' for deployment."
+            exit 1
+          fi
+
+          # Check command exit status and handle errors
+          if [ $? -ne 0 ]; then
+            echo "Failed to update kubeconfig."
+            exit 1
+          fi
+      - name: Deploy to EKS (Service Account)
+        run: |
+          kubectl apply -f redash-deployment-setup/redash-serviceaccount.yaml -n $NAMESPACE
+          if [ $? -ne 0 ]; then
+            echo "Failed to apply service account configuration."
+            exit 1
+          fi
+
+      - name: Deploy to EKS (Role)
+        run: |
+          kubectl apply -f redash-deployment-setup/redash-role-role-binding.yaml -n $NAMESPACE
+          if [ $? -ne 0 ]; then
+            echo "Failed to apply role configuration."
+            exit 1
+          fi
+
+      - name: Deploy to EKS (ConfigMap)
+        run: |
+          kubectl apply -f redash-deployment-setup/redash-configmap.yaml -n $NAMESPACE
+          if [ $? -ne 0 ]; then
+            echo "Failed to apply config map."
+            exit 1
+          fi
+
+      - name: Deploy to EKS (Secret)
+        run: |
+          kubectl apply -f redash-deployment-setup/redash-secret.yaml -n $NAMESPACE
+          if [ $? -ne 0 ]; then
+            echo "Failed to apply secret."
+            exit 1
+          fi
+
+      - name: Deploy to EKS (Deployment)
+        run: |
+          kubectl apply -f redash-deployment-setup/redash-deployment.yaml -n $NAMESPACE
+          if [ $? -ne 0 ]; then
+            echo "Failed to apply deployment."
+            exit 1
+          fi
+
+      - name: Deploy to EKS (Service)
+        run: |
+          kubectl apply -f redash-deployment-setup/redash-service.yaml -n $NAMESPACE
+          if [ $? -ne 0 ]; then
+            echo "Failed to apply service."
+            exit 1
+          fi
+
+      - name: Rollback on Failure
+        if: failure()
+        run: |
+          echo "Deployment failed. Rolling back..."
+          prev_revision=$(kubectl rollout history deployment/redash -n $NAMESPACE --revision=1 --output=jsonpath='{.revision}')
+          if [[ -n "$prev_revision" ]]; then
+            kubectl rollout undo deployment/redash -n $NAMESPACE --to-revision=$prev_revision
+            echo "Rolled back to the previous deployment revision."
+          else
+            echo "No previous deployment revision found. Unable to perform rollback."
+            exit 1
+          fi
+
+      - name: Notify Deployment Status
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          status="Deployment completed successfully."
+          if [[ "${{ job.status }}" != "success" ]]; then
+            status="Deployment failed."
+          fi
+          curl -X POST -H 'Content-type: application/json' --data "{\"text\":\"${status}\"}" $SLACK_WEBHOOK_URL
+
+      - name: Documentation
+        run: |
+          echo "Workflow documentation completed." > deployment_documentation.txt
