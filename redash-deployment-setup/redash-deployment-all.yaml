@@ -1,0 +1,140 @@
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redash-sa
+  namespace: redash
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: redash
+  name: redash-role
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: redash-role-binding
+  namespace: redash
+subjects:
+  - kind: ServiceAccount
+    name: redash-sa
+    namespace: redash
+roleRef:
+  kind: Role
+  name: redash-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redash-config
+  namespace: redash
+data:
+  REDASH_LOG_LEVEL: INFO
+  REDASH_ENFORCE_CSRF: "true"
+  REDASH_GUNICORN_TIMEOUT: "60"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: redash-secret
+  namespace: redash
+type: Opaque
+data:
+  REDASH_COOKIE_SECRET: P2ZzNlQndT1jPCNUKDAieUEjYU1NaTtCd313IWclIiM=
+  REDASH_SECRET_KEY: bXkzQncsNzRbc1QyNy5yKUIib1kvaGRSMXhEQF4kKjg=
+  REDASH_REDIS_URL: cmVkaXM6Ly86bHRuNHE3TVZoZUByZWRpcy1tYXN0ZXIucmVkaXM6NjM3OS8w
+  DATABASE_URL: cG9zdGdyZXNxbDovL3Bvc3RncmVzOnBvc3RncmVzQHRlcnJhZm9ybS0yMDI0MDYxMjE5MzMxNDQ5MjUwMDAwMDAwMS5jbXV3eGI4c3BmejEudXMtZWFzdC0yLnJkcy5hbWF6b25hd3MuY29tOjU0MzIvcmVkYXNoCg==
+                #cG9zdGdyZXM6Ly9wb3N0Z3Jlczpwb3N0Z3Jlc0B0ZXJyYWZvcm0tMjAyNDA2MTIxOTMzMTQ0OTI1MDAwMDAwMDEuY211d3hiOHNwZnoxLnVzLWVhc3QtMi5yZHMuYW1hem9uYXdzLmNvbTo1NDMyL2RlY2lzaW9uX2VuZ2luZQ==
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: redash-pv
+  namespace: redash
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /mnt/data/redash
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redash-pvc
+  namespace: redash
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redash
+  namespace: redash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redashv1
+  template:
+    metadata:
+      labels:
+        app: redashv1
+    spec:
+      serviceAccountName: redash-sa
+      containers:
+        - name: redash
+          image: 923083696216.dkr.ecr.us-east-2.amazonaws.com/redash:10.1.0.b50633
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: redash-config
+            - secretRef:
+                name: redash-secret
+          volumeMounts:
+            - mountPath: /var/lib/redash
+              name: redash-storage
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "0.5"
+            limits:
+              memory: "2Gi"
+              cpu: "1"
+      volumes:
+        - name: redash-storage
+          persistentVolumeClaim:
+            claimName: redash-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redash
+  namespace: redash
+spec:
+  selector:
+    app: redashv1
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
+  type: LoadBalancer

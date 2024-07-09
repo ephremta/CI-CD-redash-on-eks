@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: redash-pv
+  namespace: redash
+spec:
+  capacity:
+    storage: 2Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: /mnt/data/redash
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redash-pvc
+  namespace: redash
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redash
+  namespace: redash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redashv1
+  template:
+    metadata:
+      labels:
+        app: redashv1
+    spec:
+      serviceAccountName: redash-sa
+      containers:
+        - name: redash
+          image: 923083696216.dkr.ecr.us-east-2.amazonaws.com/redash:10.1.0.b50633
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: redash-config
+            - secretRef:
+                name: redash-secret
+          volumeMounts:
+            - mountPath: /var/lib/redash
+              name: redash-storage
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "0.5"
+            limits:
+              memory: "2Gi"
+              cpu: "1"
+      volumes:
+        - name: redash-storage
+          persistentVolumeClaim:
+            claimName: redash-pvc
