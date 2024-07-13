@@ -19,14 +19,35 @@ you can do like this:
   DATABASE_URL: cG9zdxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
    
 ```
-4. Apply the manifest files in order of like;
+4. Apply the manifest files in the order;
    ```
     kubectl apply -f setup-redash/deployment-setup/redash-serviceaccount.yaml -n redash
     kubectl apply -f setup-redash/deployment-setup/redash-configmap.yaml -n redash
     kubectl apply -f setup-redash/deployment-setup/redash-secret.yaml -n redash
     kubectl apply -f setup-redash/deployment-setup/redash-deployment.yaml -n redash
     kubectl apply -f setup-redash/deployment-setup/redash-service.yaml -n redash
+  
+  
+   ```
+5. Initialize Database and Apply Migrations:
+To ensure all default Redash tables are created and migrations are applied, follow these steps:
+```
+# Login to Redash container/pod
+kubectl exec -it <pod-name> -- /bin/bash -n redash
+
+# Change to the app directory
+cd /app
+
+# Initialize the database schema
+./manage.py database create_tables
+
+# Apply Migrations; after initializing the tables, or if there are new migrations to apply:
+./manage.py database upgrade
+```
+ 
    
-   
-   
-   ``` 
+
+       
+
+
+   ```
