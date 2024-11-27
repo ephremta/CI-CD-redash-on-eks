@@ -1,4 +1,4 @@
-# CI/CD for Redash on Amazon EKS
+# CI-CD for Redash on Amazon EKS
 
 Deploy Redash on an Amazon EKS environment using GitHub CI/CD. This guide assumes you have already set up an AWS EKS cluster and an RDS instance. Additionally, you need to configure a Redis server within the EKS cluster and establish a policy or role allowing access to RDS database services from EKS.
 
